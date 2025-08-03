@@ -170,7 +170,7 @@ class ResumeParser:
 		self.matcher.add("YEAR", [year_pattern])
 
 
-def parse_resume(self, file_path):
+	def parse_resume(self, file_path):
 		"""
 		Parses a resume file and extracts structured information.
 		"""
@@ -182,7 +182,7 @@ def parse_resume(self, file_path):
 			digital_text = extract_text_from_pdf(file_path)
 			if len(digital_text.strip()) < 50: # Arbitrary threshold for "little text"
 				print(f"Digital PDF extraction yielded little text for {file_path}. Attempting OCR...")
-				raw_text = extract_text_from_image_or_scanned_pdf(file_path)             #  Debugger notes: the text for "2018" is working successfully here.      We should set up the VS Code with the debugger to future efficiencies.      (August 2, 2025)                  
+				raw_text = extract_text_from_image_or_scanned_pdf(file_path)
 			else:
 				raw_text = digital_text
 		elif file_extension == '.docx':
@@ -279,10 +279,11 @@ def parse_resume(self, file_path):
 
 		return contact_info
 
-	def _extract_education(self, doc, text):
+	def _extract_education(self, doc, text):			# I just need to get this (education) section working first.      (Bendich; August 2, 2025)                   
 		education_entries = []
 		# Keywords to look for
-		education_keywords = ["education", "university", "college", "degree", "bachelor", "master", "phd", "associate"]
+		education_keywords = ["education", "university", "college", "degree", "bachelor", "master", "phd", "associate"]                                                                                                               
+                     
 		
 		# Simple regex for degrees and universities
 		degree_patterns = [
@@ -290,15 +291,17 @@ def parse_resume(self, file_path):
 			r"([A-Za-z\s]+)\s+Degree\s+in\s+([A-Za-z\s]+)",
 			r"(MBA|JD|MD)"
 		]
+		
 		university_patterns = [
 			r"\b(University of [A-Za-z\s]+)\b",
 			r"\b([A-Za-z\s]+ (University|College|Institute))\b"
 		]
 
 		# Look for sections related to education
-		# This is a very basic approach. For robust extraction, you'd define clear sections  and parse within them.                  
+		# This is a very basic approach. For robust extraction, you'd define clear sections
+		# and parse within them.
 		
-		# Example of a very basic sectioning idea (not robust for all resumes)
+		# Example of a very basic sectioning idea (not robust for all resumes)         We could map all the words that could be hear near the meaning vector(s) of "Education," "University(es),"     etc.                               
 		sections = re.split(r"(Education|Experience|Skills|Projects)", text, flags=re.IGNORECASE)
 		education_section_text = ""
 		for i, section in enumerate(sections):
@@ -475,9 +478,10 @@ def parse_resume(self, file_path):
 if __name__ == "__main__":
 	parser = ResumeParser()
 
-	DUMMY_PDF_MODE = False
-	TEST_DOC_MODE = False
-	TEST_TXT_MODE = False
+	DUMMY_PDF_MODE = False							  #		 August 2, 2025								  
+	TEST_DOC_MODE  = False
+	TEST_TXT_MODE  = False
+
 	# Create dummy resume files for testing
 	RESUME_FNAME_PROVIDED_ON_CMD_LINE = len(sys.argv) >= 2                      
 	if RESUME_FNAME_PROVIDED_ON_CMD_LINE:
@@ -586,7 +590,7 @@ Python, Java, JavaScript, AWS, Docker, Kubernetes, SQL, NoSQL
 		else:
 			print("Skipping DOCX test as dummy DOCX not generated.")
 
-	if TEST_TXT_MODE:                     
+	if TEST_TXT_MODE:
 		print("\n--- Parsing Dummy TXT ---")
 		if os.path.exists(dummy_txt_path):
 			parsed_data = parser.parse_resume(dummy_txt_path)
