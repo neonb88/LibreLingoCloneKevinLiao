@@ -27,10 +27,10 @@ Modes:
 	1.  Part of the Reading Passage, or other reference information to display (Math, etc.)                  
 	2.  Part of the question
 	3.  Part of the multiple choice answers
-	~~ 4.  Other reference information to display (Math, etc.) ~~                     I put this in the "just display this information" part of the app instead.    - June 28, 2025.  If this changes, I implore that you please document it appropriately.           
-
-
-"""
+	~~    4.  Other reference information to display (Math, etc.)     ~~                     I put this in the "just display this information" part of the app instead.               - June 28, 2025.  If this changes, I implore that you please document it appropriately.           
+           
+           
+"""           
 
 
 
