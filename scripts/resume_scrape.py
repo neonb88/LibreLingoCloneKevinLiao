@@ -1,3 +1,4 @@
+#Pytesseract not found or Tesseract-OCR not installed. OCR functionality will be limited.
 
 
 
@@ -24,6 +25,7 @@
 
 
 
+
 import os
 import re
 from PyPDF2 import PdfReader
@@ -31,6 +33,7 @@ from docx import Document
 import spacy
 from spacy.matcher import Matcher
 import sys
+import json
 
 # --- Configuration ---
 # Path to Tesseract executable (only if you're using pytesseract and it's not in your PATH)
@@ -138,489 +141,354 @@ def extract_text_from_image_or_scanned_pdf(file_path):
 
 # --- Resume Parsing Logic ---
 
+import os
+import re
+from PyPDF2 import PdfReader
+from docx import Document
+import spacy
+from spacy.matcher import Matcher
+import sys
+import json
+
+# --- Configuration (Keep as is) ---
+# ... (rest of the initial configuration and helper functions for text extraction) ...
+try:
+	nlp = spacy.load("en_core_web_sm")
+except OSError:
+	print("SpaCy model 'en_core_web_sm' not found. Please run 'python -m spacy download en_core_web_sm'")
+	nlp = None
+
+'''
+
+The prompt I used to generate this code:
+
+
+
+
+
+
+
+Hey Gemini,
+
+
+
+Can you improve this resume scraping code to work for my resumes? The formats of the resumes will vary, but most will look similar to what I am giving you with these resumes. The keywords associated with each section are the important part; we need the resume parsing code to tell which section is "skills," "education," "occupational experience," "projects", etc. but also to be able to handle common synonyms for those words that appear in many resumes you can find on the internet, including ""education", "school", "university", "college", "degree", "bachelor", "master", "phd", "associate", etc." for educational keywords.
+
+
+
+We need all the fields from their resume in different sections parsed out and stored in a separate nested python dictionary structure, like "{"customer_name": "Kevin", "experience": [('experience_0', ('Capital One', 'Full Stack Software Engineer', {'Position_start_and_end:', ('October 31, 2019', 'September 1, 2025')}, {'Skills associated with this job':, ('Python', 'ReactJS', 'SQL', 'Splunk', 'Jira', 'Java', )))... [('experience_1', ('Deloitte'), ... ] ]
+
+
+
+
+
+
+'''
+
+# --- Resume Parsing Logic (IMPROVED) ---
+
 class ResumeParser:
 	def __init__(self):
-		self.nlp = nlp # SpaCy model
-		self.matcher = Matcher(self.nlp.vocab) if self.nlp else None
+		self.nlp = nlp
+		# Define keywords for section headers
+		self.section_keywords = {
+			'experience': ['occupational experience', 'experience', 'employment history', 'work history', 'professional experience'],
+			'education': ['education', 'school', 'university', 'college', 'degree', 'academic background', 'academic qualifications'],
+			'skills': ['skills', 'technical skills', 'proficiencies', 'technologies', 'programming'],
+			'projects': ['projects', 'portfolio', 'personal projects'],
+			'summary': ['summary', 'profile', 'objective', 'professional summary']
+		}
 
-		if self.matcher:
-			# Add patterns for common entities (e.g., email, phone)
-			self.add_patterns()
-
-	def add_patterns(self):
-		# Email pattern
-		email_pattern = [{"TEXT": {"REGEX": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"}}]
-		self.matcher.add("EMAIL", [email_pattern])
-
-		# Phone number pattern (very basic, needs refinement for international formats)
-		# Allows for common separators like . - ( ) and space, and optional + at start
-		phone_pattern = [{"TEXT": {"REGEX": r"(\+?\d{1,3}[-.\s]?)?(\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}"}}]
-		self.matcher.add("PHONE", [phone_pattern])
+	def _find_sections(self, text):
+		"""
+		Identifies sections in the resume text based on keywords.
+		Returns a dictionary where keys are section names (e.g., 'education')
+		and values are the text content of those sections.
+		"""
+		sections = {}
+		lines = text.split('\n')
+		current_section = None
 		
-		# LinkedIn URL pattern
-		linkedin_pattern = [{"TEXT": {"REGEX": r"linkedin\.com/in/[a-zA-Z0-9_-]+"}}]
-		self.matcher.add("LINKEDIN", [linkedin_pattern])
+		# Create a regex pattern for all keywords to identify section headers
+		all_keywords = [item for sublist in self.section_keywords.values() for item in sublist]
+		# Match lines that consist solely of a keyword, case-insensitive
+		header_pattern = re.compile(r"^\s*(" + "|".join(all_keywords) + r")\s*$", re.IGNORECASE)
 
-		# GitHub URL pattern
-		github_pattern = [{"TEXT": {"REGEX": r"github\.com/[a-zA-Z0-9_-]+"}}]
-		self.matcher.add("GITHUB", [github_pattern])
+		def get_section_key(header_text):
+			header_text = header_text.lower().strip()
+			for key, keywords in self.section_keywords.items():
+				if header_text in keywords:
+					return key
+			return None
 
-		# Simple pattern for years (e.g., for graduation or experience dates)
-		year_pattern = [{"TEXT": {"REGEX": r"\b(19|20)\d{2}\b"}}]
-		self.matcher.add("YEAR", [year_pattern])
+		for line in lines:
+			match = header_pattern.match(line)
+			if match:
+				section_key = get_section_key(match.group(1))
+				if section_key:
+					current_section = section_key
+					sections[current_section] = []
+					continue # Skip the header line itself
 
+			if current_section and line.strip():
+				if current_section in sections:
+					sections[current_section].append(line)
+				else:
+					sections[current_section] = [line]
+		
+		# Join the lines back into a single string for each section
+		for section_name, content_lines in sections.items():
+			sections[section_name] = "\n".join(content_lines)
+			
+		# Handle cases where sections are not explicitly titled (e.g., contact info)
+		# A more advanced implementation could use positional cues.
+		return sections
 
 	def parse_resume(self, file_path):
 		"""
-		Parses a resume file and extracts structured information.
+		Main function to parse a resume file. It extracts text, finds sections,
+		parses each section, and formats the output.
 		"""
 		file_extension = os.path.splitext(file_path)[1].lower()
 		raw_text = ""
 
-		if file_extension == '.pdf':
-			# Try digital extraction first, then OCR if digital extraction yields little text
-			digital_text = extract_text_from_pdf(file_path)
-			if len(digital_text.strip()) < 50: # Arbitrary threshold for "little text"
-				print(f"Digital PDF extraction yielded little text for {file_path}. Attempting OCR...")
-				raw_text = extract_text_from_image_or_scanned_pdf(file_path)
-			else:
-				raw_text = digital_text
-		elif file_extension == '.docx':
-			raw_text = extract_text_from_docx(file_path)
-		elif file_extension == '.txt':
-			raw_text = extract_text_from_txt(file_path)
-		elif file_extension in ['.png', '.jpg', '.jpeg', '.tiff', '.bmp']:
-			raw_text = extract_text_from_image_or_scanned_pdf(file_path)
-		else:
-			return {"error": f"Unsupported file type: {file_extension}"}
+		# --- (Keep your existing text extraction logic here) ---
+		# For demonstration, I'll use a simplified call to a generic extractor
+		raw_text = self._universal_text_extractor(file_path)
 
 		if not raw_text:
 			return {"error": "Could not extract text from the resume."}
 
-		# Clean and pre-process text
-		cleaned_text = self._clean_text(raw_text)
+		# Find the sections within the resume
+		sections = self._find_sections(raw_text)
 
-		# Use SpaCy for advanced NLP tasks
-		doc = self.nlp(cleaned_text) if self.nlp else None
-		
+		# Extract information from each section
+		contact_info = self._extract_contact_info(raw_text) # Contact info is usually at the top
+		experience = self._extract_experience(sections.get('experience', ''))
+		education = self._extract_education(sections.get('education', ''))
+		skills = self._extract_skills(sections.get('skills', ''))
+
+		# --- Assemble into the desired nested dictionary structure ---
 		parsed_data = {
-			"raw_text": raw_text,
-			"cleaned_text": cleaned_text,
-			"contact_info": self._extract_contact_info(doc, cleaned_text),
-			"education": self._extract_education(doc, cleaned_text),
-			"experience": self._extract_experience(doc, cleaned_text),
-			"skills": self._extract_skills(doc, cleaned_text),
-			"projects": self._extract_projects(doc, cleaned_text),
-			"summary": self._extract_summary(doc, cleaned_text),
-			# Add more fields as needed
+			"customer_name": contact_info.get("name", "N/A"),
+			"experience": [],
+			"education": education, # Assuming education format is a list of dicts
+			"skills": skills, # Assuming skills format is a list or dict
+			# Add other parsed sections as needed
 		}
+
+		# Format experience into the specific tuple structure requested
+		for i, job in enumerate(experience):
+			exp_tuple = (
+				f'experience_{i}', (
+					job.get('company', ''),
+					job.get('title', ''),
+					{'Position_start_and_end': (job.get('start_date', ''), job.get('end_date', ''))},
+					{'Skills associated with this job': tuple(job.get('job_skills', []))}
+					# Note: The original request format for skills was complex. A tuple is used here.
+				)
+			)
+			parsed_data["experience"].append(exp_tuple)
+
 		return parsed_data
+		
+	def _universal_text_extractor(self, file_path):
+		# This is a stand-in for your multiple extract_text_from_* functions
+		if file_path.lower().endswith('.pdf'):
+			return extract_text_from_pdf(file_path)
+		# Add other file types as in your original code
+		return ""
 
-	def _clean_text(self, text):
-		"""
-		Basic text cleaning: remove extra whitespace, normalize newlines.
-		"""
-		text = re.sub(r'\s+', ' ', text).strip() # Replace multiple whitespaces with single space
-		text = text.replace('\n', ' ') # Replace newlines with spaces for a single line text for easier regex
-		return text
 
-	def _extract_contact_info(self, doc, text):
+	def _extract_contact_info(self, text):
+		"""Extracts name, email, and phone from the top of the resume."""
 		contact_info = {
-			"name": None,
-			"email": None,
-			"phone": None,
-			"linkedin": None,
-			"github": None,
-			"address": None,
-			"portfolio": None
+			"name": "Not Found",
+			"email": "Not Found",
+			"phone": "Not Found"
 		}
+		
+		# Name is usually the first line(s)
+		lines = text.split('\n')
+		if lines:
+			# A simple heuristic: the first non-email/phone line with 2-3 words is the name.
+			for line in lines[:3]:
+				if '@' not in line and not re.search(r'\d', line):
+					if 1 < len(line.split()) < 4:
+						contact_info['name'] = line.strip()
+						break
+		
+		# Email
+		email_match = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
+		if email_match:
+			contact_info["email"] = email_match.group(0)
 
-		# Use SpaCy NER for name (PERSON entity)
-		if doc:
-			for ent in doc.ents:
-				if ent.label_ == "PERSON" and contact_info["name"] is None:
-					# Heuristic: Often the first PERSON entity at the top is the name
-					# This is a very basic heuristic and needs refinement.
-					if len(ent.text.split()) >= 2: # At least two words for a name
-						contact_info["name"] = ent.text
-						break # Assume the first good match is the name
-
-		# Use matcher for email, phone, LinkedIn, GitHub
-		if self.matcher and doc:
-			matches = self.matcher(doc)
-			for match_id, start, end in matches:
-				span = doc[start:end]
-				if self.nlp.vocab.strings[match_id] == "EMAIL":
-					contact_info["email"] = span.text
-				elif self.nlp.vocab.strings[match_id] == "PHONE":
-					contact_info["phone"] = span.text
-				elif self.nlp.vocab.strings[match_id] == "LINKEDIN":
-					contact_info["linkedin"] = span.text
-				elif self.nlp.vocab.strings[match_id] == "GITHUB":
-					contact_info["github"] = span.text
-
-		# Fallback regex for email and phone if SpaCy matcher misses or isn't used
-		if not contact_info["email"]:
-			email_match = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
-			if email_match:
-				contact_info["email"] = email_match.group(0)
-
-		if not contact_info["phone"]:
-			phone_match = re.search(r"(\+?\d{1,3}[-.\s]?)?(\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}", text)
-			if phone_match:
-				contact_info["phone"] = phone_match.group(0)
-
-		# More complex regex for addresses or using pre-trained NER for GPE (Geo Political Entity)
-		# For address, often better to rely on pre-trained GPE or custom rules.
-		# Example for a simple city, state, zip:
-		address_match = re.search(r"([A-Za-z\s]+, [A-Za-z]{2}\s+\d{5}(-\d{4})?)", text)
-		if address_match:
-			contact_info["address"] = address_match.group(0)
-
+		# Phone
+		phone_match = re.search(r"(\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}", text)
+		if phone_match:
+			contact_info["phone"] = phone_match.group(0)
+			
 		return contact_info
 
-	def _extract_education(self, doc, text):			# I just need to get this (education) section working first.      (Bendich; August 2, 2025)                   
+	def _extract_education(self, education_text):
+		"""
+		Parses the education section text.
+		Handles multiple entries and various formats.
+		"""
+		if not education_text:
+			return []
+
 		education_entries = []
-		# Keywords to look for
-		education_keywords = ["education", "university", "college", "degree", "bachelor", "master", "phd", "associate"]                                                                                                               
-                     
+		# Entries are typically separated by blank lines or start with a university name.
+		# We can split by lines and process them sequentially.
 		
-		# Simple regex for degrees and universities
-		degree_patterns = [
-			r"(B\.?S\.?|M\.?S\.?|Ph\.?D\.?|Bachelor(\'s)?|Master(\'s)?|Associate(\'s)?)\s+in\s+([A-Za-z\s]+)",
-			r"([A-Za-z\s]+)\s+Degree\s+in\s+([A-Za-z\s]+)",
-			r"(MBA|JD|MD)"
-		]
-		
-		university_patterns = [
-			r"\b(University of [A-Za-z\s]+)\b",
-			r"\b([A-Za-z\s]+ (University|College|Institute))\b"
-		]
-
-		# Look for sections related to education
-		# This is a very basic approach. For robust extraction, you'd define clear sections
-		# and parse within them.
-		
-		# Example of a very basic sectioning idea (not robust for all resumes)         We could map all the words that could be hear near the meaning vector(s) of "Education," "University(es),"     etc.                               
-		sections = re.split(r"(Education|Experience|Skills|Projects)", text, flags=re.IGNORECASE)
-		education_section_text = ""
-		for i, section in enumerate(sections):
-			if section.lower().strip() == "education" and i + 1 < len(sections):
-				education_section_text = sections[i+1]
-				break
-		
-		if education_section_text:
-			# Find degrees
-			for pattern in degree_patterns:
-				for match in re.finditer(pattern, education_section_text, re.IGNORECASE):
-					degree_text = match.group(0).strip()
-					# Further parse degree_text for specific fields like type, major
-					education_entries.append({"degree_info": degree_text, "university": None, "year": None})
-			
-			# Find universities
-			for pattern in university_patterns:
-				for match in re.finditer(pattern, education_section_text, re.IGNORECASE):
-					university_text = match.group(0).strip()
-					# Try to link to existing degree entry or add new
-					found = False
-					for entry in education_entries:
-						if not entry["university"]:
-							entry["university"] = university_text
-							found = True
-							break
-					if not found:
-						education_entries.append({"degree_info": None, "university": university_text, "year": None})
-
-			# Find years (graduation years)
-			if self.matcher and doc:
-				matches = self.matcher(doc)
-				for match_id, start, end in matches:
-					if self.nlp.vocab.strings[match_id] == "YEAR":
-						year = doc[start:end].text
-						# Simple heuristic: if a year is found near an education entry
-						# This needs sophisticated contextual understanding.
-						for entry in education_entries:
-							if not entry["year"] and year in education_section_text: # Very naive check
-								entry["year"] = year
-								break
-		
-		# More advanced: using SpaCy's sentence segmentation and custom NER for better results
-		if doc:
-			for sent in doc.sents:
-				sent_text = sent.text.lower()
-				if any(keyword in sent_text for keyword in education_keywords):
-					# Here you'd apply more specific patterns or custom NER
-					pass # Placeholder for more complex NLP
-		
-		return education_entries
-
-	def _extract_experience(self, doc, text):
-		experience_entries = []
-		# Keywords for experience sections
-		experience_keywords = ["experience", "employment history", "work history", "professional experience"]
-
-		# Regex for dates (e.g., "Jan 2020 - Dec 2022", "2020 - Present")
-		date_pattern = r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)?\.?\s*(\d{4})\s*[-–—]\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)?\.?\s*(\d{4}|Present|Current)\b"
-		
-		# Example of finding potential experience blocks (very basic)
-		# Look for lines that contain a title, company, and date
-		
-		# This is where a more structured parsing approach is needed, e.g., identifying "sections"
-		# and then applying rules within those sections.
-		
-		# Simple extraction of Company and Title using NER
-		if doc:
-			for ent in doc.ents:
-				if ent.label_ == "ORG": # Organization often points to company
-					# Very basic: assume an ORG followed by a GPE (location) or a date is a company
-					# This requires more context.
-					pass # Placeholder for more complex NLP
-		
-		# For now, let's use a very basic pattern matching for Company, Title, Dates
-		# This will be highly unreliable without more structure
-		experience_block_pattern = r"([A-Za-z\s,.]+)\n([A-Za-z\s,.]+)\n" + date_pattern + r"\n((?:.|\n)*?)(?=\n\n|\Z)"
-		
-		# This regex tries to capture: Company \n Title \n Dates \n Description (until two newlines or end of text)
-		# This assumes a very specific resume format.
-		
-		# For a truly lightweight solution *without* robust section parsing, this will be hard.
-		# A slightly better approach is to iterate through lines and apply rules.
-		
-		lines = text.split('\n')
-		current_experience = None
+		lines = education_text.strip().split('\n')
+		entry = {}
 		for line in lines:
 			line = line.strip()
 			if not line:
 				continue
 
-			# Check for dates, often indicative of an experience entry
-			date_match = re.search(date_pattern, line, re.IGNORECASE)
-			if date_match:
-				if current_experience: # Save previous if new one starts
-					experience_entries.append(current_experience)
-				current_experience = {
-					"title": None,
-					"company": None,
-					"start_date": date_match.group(0),
-					"end_date": None, # Will need to parse start_date further
-					"description": []
-				}
-				# Attempt to get company and title from lines preceding the date
-				# This is highly heuristic and will fail often
-				# A better approach involves relative positioning or heading identification
-				
-			elif current_experience:
-				# Add line to description if within an ongoing experience block
-				# This assumes descriptions follow dates and are indented or clearly separate
-				current_experience["description"].append(line)
-		
-		if current_experience: # Add the last one
-			experience_entries.append(current_experience)
+			# Heuristic: If a line contains a university name or a date range,
+			# and we already have an entry, save it and start a new one.
+			# A simpler way is to assume each institution starts a new entry.
+			is_new_entry = any(keyword in line for keyword in ['University', 'College', 'Institute']) or re.search(r'\d{4}', line)
 			
-		# Post-process to try and find company/title if not found during initial pass
-		# This requires more context, often looking for bolded text or specific heading patterns
-		for entry in experience_entries:
-			# Example: Try to find company/title in lines directly above the date line
-			# This would require revisiting the raw_text or having context.
-			pass
+			if is_new_entry and 'institution' in entry:
+				education_entries.append(entry)
+				entry = {}
+
+			# Date patterns
+			date_match = re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December|Present|Current)\s+\d{4}|(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\s+-\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}|\b(20\d{2})\b', line, re.IGNORECASE)
+			
+			if date_match:
+				entry['dates'] = date_match.group(0).strip()
+			else:
+				# Assume the rest is institution and degree info
+				parts = [p.strip() for p in line.split('-') if p.strip()]
+				if 'institution' not in entry and len(parts) > 0:
+					entry['institution'] = parts[0]
+					if len(parts) > 1:
+						entry['degree'] = parts[1]
+				elif 'degree' not in entry:
+					entry['degree'] = line
+		
+		if entry: # Add the last processed entry
+			education_entries.append(entry)
+			
+		return education_entries
+
+	def _extract_experience(self, experience_text):
+		"""
+		Parses the occupational experience section.
+		"""
+		if not experience_text:
+			return []
+			
+		experience_entries = []
+		
+		# A job entry seems to start with a line containing ' - ' (Title - Company)
+		# We can split the text block by this pattern using a lookahead.
+		job_blocks = re.split(r'\n(?=.*\s-\s.*\s-\s)', experience_text.strip())
+		
+		for block in job_blocks:
+			if not block.strip():
+				continue
+				
+			lines = block.strip().split('\n')
+			entry = {'achievements': [], 'job_skills': []}
+
+			# First line usually has Title, Company, Location
+			header_match = re.match(r'^(.*)\s-\s(.*)\s-\s(.*)$', lines[0].strip())
+			if header_match:
+				entry['title'] = header_match.group(1).strip()
+				entry['company'] = header_match.group(2).strip()
+				entry['location'] = header_match.group(3).strip()
+
+			# Second line often has dates
+			if len(lines) > 1:
+				date_match = re.search(r'(.*(?:19|20)\d{2})\s*-\s*(.*)', lines[1].strip(), re.IGNORECASE)
+				if date_match:
+					entry['start_date'] = date_match.group(1).strip().replace('Oct.', 'October')
+					entry['end_date'] = date_match.group(2).strip()
+				else: # if no date, assume it's part of description
+					entry['achievements'].append(lines[1].strip())
+			
+			# Process remaining lines for achievements and skills
+			is_in_skills_subsection = False
+			for line in lines[2:]:
+				line = line.strip()
+				if line.lower().startswith('skills:'):
+					is_in_skills_subsection = True
+					line = line[len('skills:'):].strip() # Process remainder of the line
+
+				if is_in_skills_subsection:
+					skills = [s.strip() for s in line.split(',') if s.strip()]
+					entry['job_skills'].extend(skills)
+				else:
+					# Remove bullet points for cleaner achievement text
+					clean_line = re.sub(r'^\s*•\s*', '', line)
+					if clean_line:
+						entry['achievements'].append(clean_line)
+
+			if 'title' in entry: # Only add valid entries
+				experience_entries.append(entry)
 
 		return experience_entries
 
-	def _extract_skills(self, doc, text):
-		skills = []
-		# Keywords for skills sections
-		skill_keywords = ["skills", "technical skills", "proficiencies", "technologies"]
+	def _extract_skills(self, skills_text):
+		"""
+		Parses the skills section, looking for categories and lists of skills.
+		"""
+		if not skills_text:
+			return {}
 
-		# Simple approach: look for a "Skills" heading and extract lines below it
-		# until another major heading or end of document.
+		skills_by_category = {}
+		lines = skills_text.strip().split('\n')
+		current_category = "General"
 		
-		# Regex to find a "Skills" section (assuming it's a prominent heading)
-		skill_section_match = re.search(r"(Skills|SKILLS|Technical Skills|PROFICIENCIES|TECHNOLOGIES)\n(.+?)(?=\n\n[A-Z][a-z]+|\Z)", text, re.DOTALL | re.IGNORECASE)
+		for line in lines:
+			# Check if the line is a sub-heading (e.g., a category)
+			# Heuristic: it's short, doesn't contain common skill delimiters like ',',
+			# and is followed by indented or listed items. This is complex,
+			# so we'll use a simpler heuristic: if a line has no comma, it's a category.
+			if ',' not in line and ':' not in line and len(line.split()) < 4:
+				current_category = line.strip()
+				skills_by_category[current_category] = []
+			else:
+				# Assumes skills are comma or newline separated
+				skills = [s.strip() for s in re.split(r'[,•]', line) if s.strip()]
+				if current_category not in skills_by_category:
+					skills_by_category[current_category] = []
+				skills_by_category[current_category].extend(skills)
 		
-		if skill_section_match:
-			skill_section_text = skill_section_match.group(2)
-			# Split by common delimiters like comma, newline, bullet points
-			raw_skills = re.split(r'[,\n•-]', skill_section_text)
-			for skill in raw_skills:
-				skill = skill.strip()
-				if skill and len(skill) > 1 and len(skill.split()) < 5: # Filter out very long phrases
-					skills.append(skill)
-
-		# More advanced: using a pre-defined list of skills and matching them
-		# Or using custom NER model trained on skills.
-		
-		return list(set(skills)) # Remove duplicates
-
-	def _extract_projects(self, doc, text):
-		projects = []
-		# Similar to experience, this needs good sectioning or clear patterns.
-		project_keywords = ["projects", "portfolio", "personal projects"]
-		
-		# Placeholder
-		return projects
-
-	def _extract_summary(self, doc, text):
-		summary = None
-		# Often at the very beginning. Look for common summary headings.
-		summary_keywords = ["summary", "profile", "objective"]
-		
-		# Very basic: assume the first paragraph if it contains certain keywords or is short.
-		first_paragraph_match = re.match(r"^\s*([A-Za-z\s,.]+?)\.", text, re.DOTALL)
-		if first_paragraph_match:
-			potential_summary = first_paragraph_match.group(1).strip()
-			if any(keyword in potential_summary.lower() for keyword in summary_keywords) or len(potential_summary.split()) < 100: # Heuristic for length
-				summary = potential_summary
-
-		return summary
-
+		return skills_by_category
 
 # --- Main Execution for Testing ---
 if __name__ == "__main__":
+	# Ensure SpaCy model is available
+	if not nlp:
+		sys.exit("SpaCy model not loaded. Exiting.")
+
 	parser = ResumeParser()
 
-	DUMMY_PDF_MODE = False							  #		 August 2, 2025								  
-	TEST_DOC_MODE  = False
-	TEST_TXT_MODE  = False
-
-	# Create dummy resume files for testing
-	RESUME_FNAME_PROVIDED_ON_CMD_LINE = len(sys.argv) >= 2                      
-	if RESUME_FNAME_PROVIDED_ON_CMD_LINE:
-		dummy_pdf_path = sys.argv[1]
+	# Get the file path from command-line arguments or use the default
+	if len(sys.argv) >= 2:
+		resume_path = sys.argv[1]
 	else:
-		dummy_pdf_path = "/Users/heavenlybamboo/Downloads/Resume - August 1, 2025.pdf"
-	#dummy_pdf_path = "/Users/heavenlybamboo/Downloads/Resume - August 1, 2025.pdf" if DUMMY_PDF_MODE and len(sys.argv) < 2 else sys.argv[1]   # "dummy_pdf.pdf"																  
-	dummy_docx_path = "dummy_resume.docx"
-	dummy_txt_path = "dummy_resume.txt"
-	dummy_scanned_pdf_path = "dummy_scanned_resume.pdf" # This would require an actual scanned PDF or image
-	dummy_image_path = "dummy_resume.png" # This would require an actual image
+		# Default path for testing - PLEASE UPDATE THIS to the correct path on your system
+		# resume_path = "/Users/heavenlybamboo/Downloads/Resume - August 1, 2025.pdf"
+		resume_path = "Resume - August 1, 2025.pdf" # Assumes file is in the same directory
 
-	# Generate dummy PDF (requires reportlab, not included in base setup)
-	# For a real test, you'd use a real PDF.
-	if DUMMY_PDF_MODE:
-		try:
-			from reportlab.pdfgen import canvas
-			from reportlab.lib.pagesizes import letter
-
-			c = canvas.Canvas(dummy_pdf_path, pagesize=letter)
-			c.drawString(100, 750, "John Doe")
-			c.drawString(100, 730, "johndoe@example.com | (123) 456-7890 | LinkedIn: linkedin.com/in/johndoe")
-			c.drawString(100, 710, "Summary:")
-			c.drawString(120, 690, "Experienced software engineer with a passion for building scalable web applications.")
-			c.drawString(100, 670, "Education:")
-			c.drawString(120, 650, "Master of Science in Computer Science, University of Example, 2022")
-			c.drawString(120, 630, "Bachelor of Science in Software Engineering, Tech University, 2020")
-			c.drawString(100, 610, "Experience:")
-			c.drawString(120, 590, "Senior Software Engineer, Acme Corp, Jan 2022 - Present")
-			c.drawString(140, 570, "- Developed and maintained backend services.")
-			c.drawString(140, 550, "- Led a team of 3 engineers.")
-			c.drawString(120, 530, "Software Engineer, Beta Solutions, Jul 2020 - Dec 2021")
-			c.drawString(140, 510, "- Implemented new features.")
-			c.drawString(100, 490, "Skills:")
-			c.drawString(120, 470, "Python, Java, JavaScript, AWS, Docker, Kubernetes, SQL, NoSQL")
-			c.save()
-			print(f"Generated dummy PDF: {dummy_pdf_path}")
-		except ImportError:
-			print("ReportLab not installed. Skipping dummy PDF generation. Please use a real PDF for testing.")
+	if not os.path.exists(resume_path):
+		print(f"Error: Resume file not found at '{resume_path}'")
+		print("Please provide the correct path as a command-line argument or update the default path in the script.")
 	else:
-		pass
-	# Generate dummy DOCX
-	try:
-		document = Document()
-		document.add_paragraph("John Doe")
-		document.add_paragraph("johndoe@example.com | (123) 456-7890 | LinkedIn: linkedin.com/in/johndoe")
-		document.add_paragraph("Summary:")
-		document.add_paragraph("Experienced software engineer with a passion for building scalable web applications.")
-		document.add_paragraph("Education:")
-		document.add_paragraph("Master of Science in Computer Science, University of Example, 2022")
-		document.add_paragraph("Bachelor of Science in Software Engineering, Tech University, 2020")
-		document.add_paragraph("Experience:")
-		document.add_paragraph("Senior Software Engineer, Acme Corp, Jan 2022 - Present")
-		document.add_paragraph("- Developed and maintained backend services.")
-		document.add_paragraph("- Led a team of 3 engineers.")
-		document.add_paragraph("Software Engineer, Beta Solutions, Jul 2020 - Dec 2021")
-		document.add_paragraph("- Implemented new features.")
-		document.add_paragraph("Skills:")
-		document.add_paragraph("Python, Java, JavaScript, AWS, Docker, Kubernetes, SQL, NoSQL")
-		document.save(dummy_docx_path)
-		print(f"Generated dummy DOCX: {dummy_docx_path}")
-	except Exception as e:
-		print(f"Error generating dummy DOCX: {e}. Skipping dummy DOCX generation. Please use a real DOCX for testing.")
-
-	# Generate dummy TXT
-	with open(dummy_txt_path, "w") as f:
-		f.write("""John Doe
-johndoe@example.com | (123) 456-7890
-LinkedIn: linkedin.com/in/johndoe
-
-Summary:
-Experienced software engineer with a passion for building scalable web applications.
-
-Education:
-Master of Science in Computer Science, University of Example, 2022
-Bachelor of Science in Software Engineering, Tech University, 2020
-
-Experience:
-Senior Software Engineer, Acme Corp, Jan 2022 - Present
-- Developed and maintained backend services.
-- Led a team of 3 engineers.
-
-Software Engineer, Beta Solutions, Jul 2020 - Dec 2021
-- Implemented new features.
-
-Skills:
-Python, Java, JavaScript, AWS, Docker, Kubernetes, SQL, NoSQL
-""")
-	print(f"Generated dummy TXT: {dummy_txt_path}")
-
-	# Test parsing
-	print("\n--- Parsing Dummy PDF ---")
-	if os.path.exists(dummy_pdf_path):
-		parsed_data = parser.parse_resume(dummy_pdf_path)
-		import json
+		print(f"--- Parsing Resume: {resume_path} ---")
+		parsed_data = parser.parse_resume(resume_path)
+		
+		# Pretty-print the final nested dictionary
 		print(json.dumps(parsed_data, indent=2))
-	else:
-		print("Skipping PDF test as dummy PDF not generated.")
-
-	if TEST_DOC_MODE:
-		print("\n--- Parsing Dummy DOCX ---")
-		if os.path.exists(dummy_docx_path):
-			parsed_data = parser.parse_resume(dummy_docx_path)
-			import json
-			print(json.dumps(parsed_data, indent=2))
-		else:
-			print("Skipping DOCX test as dummy DOCX not generated.")
-
-	if TEST_TXT_MODE:
-		print("\n--- Parsing Dummy TXT ---")
-		if os.path.exists(dummy_txt_path):
-			parsed_data = parser.parse_resume(dummy_txt_path)
-			import json
-			print(json.dumps(parsed_data, indent=2))
-		else:
-			print("Skipping TXT test as dummy TXT not generated.")
-
-	# Example of how you might handle a real scanned PDF or image
-	# For this to work, you need to replace `dummy_scanned_pdf_path`
-	# and `dummy_image_path` with actual paths to scanned files.
-	# print("\n--- Parsing Dummy Scanned PDF (Requires Tesseract) ---")
-	# if os.path.exists(dummy_scanned_pdf_path):
-	#	  parsed_data = parser.parse_resume(dummy_scanned_pdf_path)
-	#	  import json
-	#	  print(json.dumps(parsed_data, indent=2))
-	# else:
-	#	  print(f"Skipping scanned PDF test. Please create a scanned PDF at: {dummy_scanned_pdf_path}")
-
-	# print("\n--- Parsing Dummy Image (Requires Tesseract) ---")
-	# if os.path.exists(dummy_image_path):
-	#	  parsed_data = parser.parse_resume(dummy_image_path)
-	#	  import json
-	#	  print(json.dumps(parsed_data, indent=2))
-	# else:
-	#	  print(f"Skipping image test. Please create an image at: {dummy_image_path}")
-
-
-
-
 
 
 
