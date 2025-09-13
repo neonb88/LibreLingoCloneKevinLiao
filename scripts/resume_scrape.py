@@ -1,34 +1,41 @@
 #Pytesseract not found or Tesseract-OCR not installed. OCR functionality will be limited.
-
-
-
-
-
+	#  NOTE:  Pytesseract does OCR.  PyPDF2 does not.               
 
 '''					 
+
+=================================================================================
 	To-do:		run a resume through it and fix things.						 
 		At this point, the code is purely generated through Gemini.						  
-			(July 24, 2025)   
+			(August 12, 2025)   
+
+	Split skills by commas instead of just adding every word in.		(August 17, 2025)
+		Skills was better right now compared to experience, etc.    
+	It needs to get "experience" correctly.                      
 
 
-	Send Jeannine my signature for the check.              
+=================================================================================
+	(search for the shortest lines that contain the keywords for the headers)                       
+		( ^   the earlier idea, in the line above            is better)   Search for lines with length 1, 2, or perhaps                           
+
+
+
+	I can also try searching through the newlines                      
 
 
 
 
 
+
+	If necessary, do NLP on the lines to detect which is "careers," "education," "skills," "," ","      etc.   .        
+		(ie. use GlOVe for  common synonyms, etc.)                      
 
 
 '''					 
-
-
-
-
-
 
 import os
 import re
 from PyPDF2 import PdfReader
+import pymupdf
 from docx import Document
 import spacy
 from spacy.matcher import Matcher
@@ -65,15 +72,14 @@ def extract_text_from_pdf(pdf_path):
 	Note: This will not work for scanned PDFs (images).
 	"""
 	text = ""
-	try:
-		with open(pdf_path, 'rb') as file:
-			reader = PdfReader(file)
-			for page_num in range(len(reader.pages)):
-				page = reader.pages[page_num]
-				text += page.extract_text() + "\n"
-	except Exception as e:
-		print(f"Error extracting text from PDF {pdf_path}: {e}")
-	return text
+	doc = pymupdf.open(pdf_path)
+	TEXT_IDX = 4
+	for i in range(doc.page_count):
+		page = doc.load_page(i)
+		print(page.get_text("blocks"))
+		for block in page.get_text("blocks"):
+			text += block[TEXT_IDX] + '\n'    #page.get_text("blocks")[TEXT_IDX] + '\n'
+	return text, doc
 
 def extract_text_from_docx(docx_path):
 	"""
@@ -141,15 +147,6 @@ def extract_text_from_image_or_scanned_pdf(file_path):
 
 # --- Resume Parsing Logic ---
 
-import os
-import re
-from PyPDF2 import PdfReader
-from docx import Document
-import spacy
-from spacy.matcher import Matcher
-import sys
-import json
-
 # --- Configuration (Keep as is) ---
 # ... (rest of the initial configuration and helper functions for text extraction) ...
 try:
@@ -160,7 +157,7 @@ except OSError:
 
 '''
 
-The prompt I used to generate this code:
+The prompt I used to generate this code with Gemini (an LLM like ChatGPT) :                  
 
 
 
@@ -192,14 +189,14 @@ class ResumeParser:
 		self.nlp = nlp
 		# Define keywords for section headers
 		self.section_keywords = {
-			'experience': ['occupational experience', 'experience', 'employment history', 'work history', 'professional experience'],
+			'experience': ['occupational experience', 'experience', 'employment history', 'work history', 'professional experience', 'work'],
 			'education': ['education', 'school', 'university', 'college', 'degree', 'academic background', 'academic qualifications'],
 			'skills': ['skills', 'technical skills', 'proficiencies', 'technologies', 'programming'],
 			'projects': ['projects', 'portfolio', 'personal projects'],
 			'summary': ['summary', 'profile', 'objective', 'professional summary']
 		}
 
-	def _find_sections(self, text):
+	def _find_sections(self, text, pymu_doc):
 		"""
 		Identifies sections in the resume text based on keywords.
 		Returns a dictionary where keys are section names (e.g., 'education')
@@ -213,6 +210,14 @@ class ResumeParser:
 		all_keywords = [item for sublist in self.section_keywords.values() for item in sublist]
 		# Match lines that consist solely of a keyword, case-insensitive
 		header_pattern = re.compile(r"^\s*(" + "|".join(all_keywords) + r")\s*$", re.IGNORECASE)
+
+		#  TODO: parse the pymu_doc and  into sections here .               
+		"""
+		# TODO: embeddings after getting the hard-coded regexes version working        
+		from llama_index.embeddings import HuggingFaceEmbedding
+		embed_model = HuggingFaceEmbedding(model_name="meta-llama/Llama-2-7b-chat-hf")
+		embeddings = embed_model.get_text_embedding("Hello World!")
+		"""
 
 		def get_section_key(header_text):
 			header_text = header_text.lower().strip()
@@ -254,13 +259,14 @@ class ResumeParser:
 
 		# --- (Keep your existing text extraction logic here) ---
 		# For demonstration, I'll use a simplified call to a generic extractor
-		raw_text = self._universal_text_extractor(file_path)
+		raw_text, doc = self._universal_text_extractor(file_path)
+		print("Raw text of the resume: ", raw_text)                        
 
 		if not raw_text:
 			return {"error": "Could not extract text from the resume."}
 
 		# Find the sections within the resume
-		sections = self._find_sections(raw_text)
+		sections = self._find_sections(raw_text, doc)
 
 		# Extract information from each section
 		contact_info = self._extract_contact_info(raw_text) # Contact info is usually at the top
@@ -489,7 +495,6 @@ if __name__ == "__main__":
 		
 		# Pretty-print the final nested dictionary
 		print(json.dumps(parsed_data, indent=2))
-
 
 
 
